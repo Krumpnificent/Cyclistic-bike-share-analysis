@@ -98,7 +98,7 @@ FROM rides_22;
 
 
 
--- MERGING ALL THE TABLES INTO ONE TABLE USING THE "UNION" COMMAND
+-- MERGING ALL THE TABLES INTO ONE TABLE USING THE "UNION" OPERATOR
 
 SELECT * 
 INTO merged
@@ -194,7 +194,7 @@ the DEPENDENT user types
 
 -- returns the categories present int the memeber_casual column
 SELECT DISTINCT member_casual
-from merged;
+FROM merged;
 
 
 -- returns the number of observations that fall under each categgory
@@ -223,25 +223,13 @@ GROUP BY member_casual;
 -- Adding more columns
 ALTER TABLE merged
 ADD COLUMN year_month_day date,
-ADD COLUMN years numeric,
-ADD COLUMN months numeric,
-ADD COLUMN days numeric,
 ADD COLUMN day_of_week numeric,
 ADD COLUMN ride_length numeric;
 
--- fill columns 
+-- Update columns 
 
 UPDATE merged
 SET year_month_day = (SELECT CAST(started_at AS date));
-
-UPDATE merged
-SET years = EXTRACT(year FROM year_month_day);
-
-UPDATE merged
-SET months = EXTRACT(month FROM year_month_day);
-
-UPDATE merged
-SET days = EXTRACT(day FROM year_month_day);
 
 UPDATE merged
 SET day_of_week = EXTRACT(dow FROM started_at);
@@ -249,6 +237,7 @@ SET day_of_week = EXTRACT(dow FROM started_at);
 -- difference of end and start times in seconds
 UPDATE merged
 SET ride_length = EXTRACT(EPOCH FROM (ended_at - started_at)); 
+
 
 -- Removing bad data
 
@@ -261,54 +250,139 @@ DELETE FROM merged
 where start_station_name = 'HQ QR' OR ride_length < 0 OR member_casual = 'Dependent';
 
 -- check results (We have now completely cleaned our data)
-select distinct member_casual
-from merged;
+SELECT DISTINCT member_casual
+FROM merged;
 -----------------------------------------------------------------------------------------
 
 
 
 -- ANALYZING DATA
 
+-- Groups Rides by date and rider-category
+SELECT year_month_day, member_casual, COUNT(*)
+FROM merged
+GROUP BY year_month_day, member_casual
 
-SELECT member_casual, AVG(ride_length) AS mean_time,  MIN(ride_length) AS min_time, MAX(ride_length) AS max_time, 
-		PERCENTILE_CONT(.5) WITHIN GROUP (ORDER BY ride_length) AS med_time
+
+
+/*
+I found outliers in the max ride lengths for member and casual rides respectively.
+I will remove these outliers to have more accurate results
+*/
+SELECT member_casual, 
+		AVG(ride_length) AS avg_ride_length,  
+		MIN(ride_length) AS min_ride_length, 
+		MAX(ride_length) AS max_ride_length, 
+		PERCENTILE_CONT(.5) WITHIN GROUP (ORDER BY ride_length) AS med_ride_length
 FROM merged 
 GROUP BY member_casual;
 
+/*
+	             avg	     min	 max        med
+----------+-----------------------+--------+------------+---------
+"casual"    2259.7121001688636024	0     14340041	    1259 
+----------+-----------------------+--------+------------+---------
+"member"    795.5894388260353929	0.    13561217	    588  
+----------+-----------------------+--------+------------+---------
 
--- CTE
-WITH ca AS
-(SELECT day_of_week, COUNT(*) AS no_of_casual_rides,
-		ROUND(AVG(ride_length), 2) AS avg_casual_ride_time
+*/
+
+
+
+-- provides sample standard deviation of the ride_lengths
+SELECT member_casual, 
+		STDDEV_SAMP(ride_length) 
 FROM merged 
-WHERE member_casual = 'casual'
-GROUP BY day_of_week),
+GROUP BY member_casual;
 
-me AS
-(SELECT day_of_week, COUNT(*) AS no_of_member_rides,
- ROUND(AVG(ride_length), 2) AS avg_member_ride_time
+/*
+
+----------+-------------------
+"casual"    29056.98595453   
+----------+-------------------
+"member"    9468.974410373880
+----------+-------------------
+
+*/
+
+
+/*
+We will keep only the 95% data closest to the average with this formula: 
+(Average - Standard Deviation * 2) < DATA WE KEEP < (Average + Standard Deviation * 2)
+*/
+
+SELECT (AVG(ride_length) - STDDEV_SAMP(ride_length)*2) AS lower_bound,
+		(AVG(ride_length) + STDDEV_SAMP(ride_length*2)) AS upper_bound
 FROM merged
-WHERE member_casual = 'member'
-GROUP BY day_of_week)
 
-SELECT ca.day_of_week, 
-		ca.no_of_casual_rides,
-		me.no_of_member_rides,
-		ca.avg_casual_ride_time, me.avg_member_ride_time
-FROM ca
-LEFT JOIN me
-ON ca.day_of_week = me.day_of_week
+--result
+/*
+       lower_bound      |     upper_bound
+------------------------+-----------------------
+-34730.4970357056059048   37227.7408573043940952
+------------------------+-----------------------
 
-ORDER BY CASE
-			WHEN ca.day_of_week = 'Sunday' THEN 0
-			WHEN ca.day_of_week = 'Monday' THEN 1
-			WHEN ca.day_of_week = 'Tuesday' THEN 2
-			WHEN ca.day_of_week = 'Wednesday' THEN 3
-			WHEN ca.day_of_week = 'Thursday' THEN 4
-			WHEN ca.day_of_week = 'Friday' THEN 5
-			WHEN ca.day_of_week = 'Saturday' THEN 6
-			END;
+This means that for our trimmed average, 
+we would consider only the rides with lengths between -34730s & 37227s
+This would give us a much more reasonable result than the 
+*/
 
-SELECT years, member_casual, COUNT(*) AS total_rides
+WITH bounds AS (
+SELECT (AVG(ride_length) - STDDEV_SAMP(ride_length)*2) AS lower_bound,
+		(AVG(ride_length) + STDDEV_SAMP(ride_length*2)) AS upper_bound
 FROM merged
-GROUP BY years, member_casual
+)
+
+SELECT member_casual, 
+		ROUND(AVG(ride_length), 2) AS avg_ride_length,  
+		MIN(ride_length) AS min_ride_length, 
+		MAX(ride_length) AS max_ride_length, 
+		PERCENTILE_CONT(.5) WITHIN GROUP (ORDER BY ride_length) AS med_ride_length
+FROM merged 
+WHERE ride_length BETWEEN 
+						(SELECT lower_bound FROM bounds) 
+						AND 
+						(SELECT upper_bound FROM bounds)
+GROUP BY member_casual;
+
+
+/*
+--------------+-----------------------+----+---------+--------
+"casual" 	 1796.3326091004387510 	0     37225	1254 |
+--------------+-----------------------+----+---------+--------
+"member" 	 748.1919291220953066  	0     37212  	588  |
+--------------+-----------------------+----+---------+--------
+*/
+
+
+-- casual and member ride lengths by date		
+		
+WITH bounds AS (
+SELECT (AVG(ride_length) - STDDEV_SAMP(ride_length)*2) AS lower_bound,
+		(AVG(ride_length) + STDDEV_SAMP(ride_length*2)) AS upper_bound
+FROM merged
+)
+
+SELECT year_month_day, member_casual,
+ 		ROUND(AVG(ride_length), 2) AS avg_ride_length
+FROM merged
+WHERE ride_length BETWEEN 
+					(SELECT lower_bound FROM bounds) 
+					AND 
+					(SELECT upper_bound FROM bounds)
+GROUP BY year_month_day, member_casual;
+
+
+/*
+TOP 20 stations by traffic
+ranks stations by activity
+*/ 
+SELECT end_station_name station_name, COUNT(end_station_name) total_visits, 
+		RANK() OVER(
+		ORDER BY COUNT(end_station_name) DESC
+		) activity_rank
+FROM merged
+WHERE end_station_name IS NOT NULL
+GROUP BY end_station_name
+LIMIT 20;
+
