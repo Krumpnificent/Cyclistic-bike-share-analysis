@@ -1,7 +1,7 @@
 # Cyclistic-bike-share-analysis
-This is an analytics project about the bike-share data of a fictional comapny, Cyclystic. The goal of my analysis is to design marketing strategies aimed at converting casual riders into annual members. To do this, I analyzed Cyclistic's bike-share data to identify pattern and trends on how Cyclistic members and casual users use its products differently.
+This is an analytics project about the bike-share data of a fictional company, Cyclystic. The goal of my analysis is to design marketing strategies aimed at converting casual riders into annual members. To do this, I analyzed Cyclistic's bike-share data to identify pattern and trends on how Cyclistic members and casual users use its products differently.
 
-### key definitions and notes:
+### Definitions and notes:
 * Casual users: customers who purchas single-ride or full-day passes
 * Cyclistic members: customers who purchase annual memberships
 * Tools used: **PostgreSQL, Tableau, Google spradsheet, Google search engine!**
